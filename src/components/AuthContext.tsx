@@ -89,33 +89,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    const PROFILE_BOOTSTRAP_MS = 15_000;
+
     const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        const p = await firestoreService.getUserProfile(u.uid);
-        if (p) {
-          setProfile(p);
-        } else {
-          // Initialize fresh profile
-          const newProfile: UserProfile = {
-            uid: u.uid,
-            email: u.email || '',
-            displayName: u.displayName || 'User',
-            familyMembers: [],
-            globalPreferences: {
-              cuisines: [],
-              dietaryRestrictions: [],
-              budgetLimit: 0
-            },
-            inventory: []
-          };
+      try {
+        setUser(u);
+        if (!u) {
+          setProfile(null);
+          return;
+        }
+
+        const minimalProfile = (): UserProfile => ({
+          uid: u.uid,
+          email: u.email || '',
+          displayName: u.displayName || 'User',
+          familyMembers: [],
+          globalPreferences: {
+            cuisines: [],
+            dietaryRestrictions: [],
+            budgetLimit: 0,
+          },
+          inventory: [],
+        });
+
+        const bootstrap = async () => {
+          const p = await firestoreService.getUserProfile(u.uid);
+          if (p) {
+            setProfile(p);
+            return;
+          }
+          const newProfile = minimalProfile();
           await firestoreService.saveUserProfile(newProfile);
           setProfile(newProfile);
+        };
+
+        try {
+          await Promise.race([
+            bootstrap(),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('profile_bootstrap_timeout')), PROFILE_BOOTSTRAP_MS);
+            }),
+          ]);
+        } catch (e) {
+          console.warn('[Auth] Profile bootstrap failed or timed out; using local minimal profile.', e);
+          setProfile(minimalProfile());
         }
-      } else {
-        setProfile(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     return unsub;
   }, []);
