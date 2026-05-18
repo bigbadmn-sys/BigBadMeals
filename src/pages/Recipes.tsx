@@ -7,15 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Search, Plus, Filter, ChefHat, Timer, Flame, Heart, Trash2, Camera, Link, FileText, Loader2, X } from 'lucide-react';
 import { dataService } from '../services/dataService';
-import { extractRecipeFromText, extractRecipeFromImage, extractRecipeFromUrl, fetchRecipeBannerFromUrl } from '../services/geminiService';
-import type { DayPlan, Meal, MealPlan, Recipe, RecipeTag } from '../types';
+import { extractRecipeFromText, extractRecipeFromImage, extractRecipeFromUrl } from '../services/geminiService';
+import type { DayPlan, MealPlan, Recipe, RecipeTag } from '../types';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { addDays, format, parseISO, startOfWeek } from 'date-fns';
-import { deriveRecipeTags, normalizeIngredients, scaleIngredientAmount, suggestRecipeImageUrl } from '../lib/ingredientUtils';
-import { ALL_MEAL_SLOTS, suggestMealPlacementForRecipe } from '../lib/mealPlanSlots';
-import { enrichExtractedRecipeFromText } from '../lib/parseRecipeText';
+import { addDays, format, startOfWeek } from 'date-fns';
+import { deriveRecipeTags, normalizeIngredients, suggestRecipeImageUrl } from '../lib/ingredientUtils';
 
 export const Recipes = () => {
   const { user } = useContext(AuthContext);
@@ -30,21 +28,10 @@ export const Recipes = () => {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [tagFilter, setTagFilter] = useState<'all' | RecipeTag>('all');
   const [filterOpen, setFilterOpen] = useState(false);
-  /** Inline “add to plan” step inside the recipe modal */
-  const [addToPlanUiOpen, setAddToPlanUiOpen] = useState(false);
-  const [planDateIso, setPlanDateIso] = useState('');
-  const [planMealType, setPlanMealType] = useState<Meal['type']>('dinner');
-  const [planSlot, setPlanSlot] = useState<NonNullable<Meal['slot']>>('main');
-  /** Ingredient amounts in the recipe modal: 1X / 2X / 3X batch (display only). */
-  const [recipeScale, setRecipeScale] = useState<1 | 2 | 3>(1);
 
   useEffect(() => {
     if (user) loadRecipes();
   }, [user]);
-
-  useEffect(() => {
-    if (activeRecipe?.id) setRecipeScale(1);
-  }, [activeRecipe?.id]);
 
   useEffect(() => {
     if (!user) return;
@@ -64,10 +51,6 @@ export const Recipes = () => {
     }
   }, [user, loading, recipes]);
 
-  useEffect(() => {
-    if (!activeRecipe) setAddToPlanUiOpen(false);
-  }, [activeRecipe]);
-
   const loadRecipes = async () => {
     const data = await dataService.getRecipes(user!.uid);
     setRecipes(data);
@@ -83,18 +66,7 @@ export const Recipes = () => {
           const updates: Partial<Recipe> = {};
           if (!r.cleanIngredients || r.cleanIngredients.length === 0) updates.cleanIngredients = normalizeIngredients(r.ingredients);
           if (!r.tags || r.tags.length === 0) updates.tags = deriveRecipeTags(r);
-          if (!r.imageUrl && r.sourceUrl) {
-            try {
-              const { imageUrl } = await fetchRecipeBannerFromUrl(r.sourceUrl);
-              if (imageUrl) updates.imageUrl = imageUrl;
-            } catch {
-              // ignore banner backfill errors
-            }
-          }
-          if (!r.imageUrl && !updates.imageUrl && !r.sourceUrl) {
-            const suggested = suggestRecipeImageUrl(r);
-            if (suggested) updates.imageUrl = suggested;
-          }
+          if (!r.imageUrl) updates.imageUrl = suggestRecipeImageUrl(r);
           await dataService.updateRecipe(user!.uid, r.id, updates);
         })
       )
@@ -106,10 +78,7 @@ export const Recipes = () => {
     }
   };
 
-  const addRecipeToMealPlan = async (
-    recipe: Recipe,
-    explicit?: { date: string; type: Meal['type']; slot?: Meal['slot'] }
-  ) => {
+  const addRecipeToMealPlan = async (recipe: Recipe) => {
     if (!user) {
       toast.error('Please sign in to add meals to your plan');
       return;
@@ -124,38 +93,30 @@ export const Recipes = () => {
     const todayIso = format(new Date(), 'yyyy-MM-dd');
     const planTargetRaw = sessionStorage.getItem('bb:plan:addTarget');
     let targetDate = todayIso;
-    let targetType: Meal['type'] = 'dinner';
-    let targetSlot: Meal['slot'] | undefined = 'main';
-
-    if (explicit) {
-      targetDate = explicit.date;
-      targetType = explicit.type;
-      targetSlot = explicit.type === 'snack' ? 'snack' : explicit.slot || 'main';
-      sessionStorage.removeItem('bb:plan:addTarget');
-    } else {
-      try {
-        if (planTargetRaw) {
-          const parsed = JSON.parse(planTargetRaw);
-          if (typeof parsed?.date === 'string') targetDate = parsed.date;
-          if (parsed?.type === 'breakfast' || parsed?.type === 'lunch' || parsed?.type === 'dinner' || parsed?.type === 'snack') {
-            targetType = parsed.type;
-          }
-          if (
-            parsed?.slot === 'main' ||
-            parsed?.slot === 'appetizer' ||
-            parsed?.slot === 'drink' ||
-            parsed?.slot === 'side' ||
-            parsed?.slot === 'dessert' ||
-            parsed?.slot === 'snack'
-          ) {
-            targetSlot = parsed.slot;
-          }
+    let targetType: 'breakfast' | 'lunch' | 'dinner' | 'snack' = 'dinner';
+    let targetSlot: 'main' | 'appetizer' | 'drink' | 'side' | 'dessert' | 'snack' | undefined = 'main';
+    try {
+      if (planTargetRaw) {
+        const parsed = JSON.parse(planTargetRaw);
+        if (typeof parsed?.date === 'string') targetDate = parsed.date;
+        if (parsed?.type === 'breakfast' || parsed?.type === 'lunch' || parsed?.type === 'dinner' || parsed?.type === 'snack') {
+          targetType = parsed.type;
         }
-      } catch {
-        // ignore parse errors
-      } finally {
-        sessionStorage.removeItem('bb:plan:addTarget');
+        if (
+          parsed?.slot === 'main' ||
+          parsed?.slot === 'appetizer' ||
+          parsed?.slot === 'drink' ||
+          parsed?.slot === 'side' ||
+          parsed?.slot === 'dessert' ||
+          parsed?.slot === 'snack'
+        ) {
+          targetSlot = parsed.slot;
+        }
       }
+    } catch {
+      // ignore parse errors
+    } finally {
+      sessionStorage.removeItem('bb:plan:addTarget');
     }
     const weekStartIso = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
     const weekEndIso = format(addDays(new Date(`${weekStartIso}T00:00:00.000Z`), 6), 'yyyy-MM-dd');
@@ -202,73 +163,8 @@ export const Recipes = () => {
       days: nextDays,
     });
 
-    const addedToday = targetDate === todayIso;
-    toast.success(
-      addedToday
-        ? "Added to today's meal plan"
-        : `Added to ${format(parseISO(`${targetDate}T12:00:00`), 'EEEE, MMM d')}`
-    );
-    setAddToPlanUiOpen(false);
+    toast.success('Added to meal plan');
     setActiveRecipe(null);
-  };
-
-  const beginAddToMealPlan = () => {
-    if (!activeRecipe) return;
-    const todayIso = format(new Date(), 'yyyy-MM-dd');
-    let dateIso = todayIso;
-    let mealType: Meal['type'] = 'dinner';
-    let slot: NonNullable<Meal['slot']> = 'main';
-    const raw = sessionStorage.getItem('bb:plan:addTarget');
-    try {
-      if (raw) {
-        const p = JSON.parse(raw);
-        if (typeof p?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date)) dateIso = p.date;
-        if (p?.type === 'breakfast' || p?.type === 'lunch' || p?.type === 'dinner' || p?.type === 'snack') mealType = p.type;
-        if (
-          p?.slot === 'main' ||
-          p?.slot === 'appetizer' ||
-          p?.slot === 'drink' ||
-          p?.slot === 'side' ||
-          p?.slot === 'dessert' ||
-          p?.slot === 'snack'
-        ) {
-          slot = p.slot;
-        }
-      } else {
-        const s = suggestMealPlacementForRecipe(activeRecipe);
-        mealType = s.type;
-        slot = s.slot;
-      }
-    } catch {
-      const s = suggestMealPlacementForRecipe(activeRecipe);
-      mealType = s.type;
-      slot = s.slot;
-    }
-    if (mealType === 'snack') slot = 'snack';
-    setPlanDateIso(dateIso);
-    setPlanMealType(mealType);
-    setPlanSlot(slot);
-    setAddToPlanUiOpen(true);
-  };
-
-  const confirmAddToMealPlan = () => {
-    if (!activeRecipe || !planDateIso) return;
-    void addRecipeToMealPlan(activeRecipe, { date: planDateIso, type: planMealType, slot: planSlot });
-  };
-
-  const persistImportedRecipe = async (baseRecipe: Omit<Recipe, 'id'>) => {
-    const recipe: Omit<Recipe, 'id'> = {
-      ...baseRecipe,
-      cleanIngredients: normalizeIngredients(baseRecipe.ingredients),
-      tags: deriveRecipeTags(baseRecipe),
-      imageUrl: baseRecipe.imageUrl || suggestRecipeImageUrl(baseRecipe),
-    };
-    const id = await dataService.addRecipe(user!.uid, recipe);
-    if (!id) {
-      throw new Error('Failed to save recipe');
-    }
-    await loadRecipes();
-    return id;
   };
 
   const handleImportUrl = async () => {
@@ -276,15 +172,6 @@ export const Recipes = () => {
     setImporting(true);
     try {
       const extracted = await extractRecipeFromUrl(importUrl);
-      let heroImage = extracted.imageUrl;
-      if (!heroImage) {
-        try {
-          const { imageUrl } = await fetchRecipeBannerFromUrl(importUrl.trim());
-          if (imageUrl) heroImage = imageUrl;
-        } catch {
-          // extract-url may have already tried; optional second pass
-        }
-      }
       const baseRecipe: Omit<Recipe, 'id'> = {
         ownerId: user!.uid,
         title: extracted.title || 'Extracted Recipe',
@@ -298,10 +185,17 @@ export const Recipes = () => {
         category: extracted.category,
         isFavorite: false,
         sourceUrl: importUrl.trim(),
-        imageUrl: heroImage,
+        imageUrl: extracted.imageUrl,
         createdAt: new Date().toISOString(),
       };
-      await persistImportedRecipe(baseRecipe);
+      const recipe: Omit<Recipe, 'id'> = {
+        ...baseRecipe,
+        cleanIngredients: normalizeIngredients(baseRecipe.ingredients),
+        tags: deriveRecipeTags(baseRecipe),
+        imageUrl: baseRecipe.imageUrl || suggestRecipeImageUrl(baseRecipe),
+      };
+      await dataService.addRecipe(user!.uid, recipe);
+      await loadRecipes();
       setImportUrl('');
       setShowUrlInput(false);
       setDialogOpen(false);
@@ -319,7 +213,7 @@ export const Recipes = () => {
     setImporting(true);
     try {
       console.log('[Recipes] Importing from text...');
-      const extracted = enrichExtractedRecipeFromText(importText, await extractRecipeFromText(importText));
+      const extracted = await extractRecipeFromText(importText);
       const baseRecipe: Omit<Recipe, 'id'> = {
         ownerId: user!.uid,
         title: extracted.title || 'Extracted Recipe',
@@ -335,7 +229,14 @@ export const Recipes = () => {
         imageUrl: extracted.imageUrl,
         createdAt: new Date().toISOString(),
       };
-      await persistImportedRecipe(baseRecipe);
+      const recipe: Omit<Recipe, 'id'> = {
+        ...baseRecipe,
+        cleanIngredients: normalizeIngredients(baseRecipe.ingredients),
+        tags: deriveRecipeTags(baseRecipe),
+        imageUrl: baseRecipe.imageUrl || suggestRecipeImageUrl(baseRecipe),
+      };
+      await dataService.addRecipe(user!.uid, recipe);
+      await loadRecipes();
       setImportText('');
       setDialogOpen(false);
       toast.success('Recipe imported from text!');
@@ -347,11 +248,10 @@ export const Recipes = () => {
     }
   };
 
-  /** Resize to a JPEG data URL for card thumbnails and Gemini payload. */
-  const resizeImage = (dataUrlInput: string, maxWidth = 720, maxHeight = 720): Promise<{ dataUrl: string; base64: string }> => {
+  const resizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promise<string> => {
     return new Promise((resolve, reject) => {
       const img = new Image();
-      img.src = dataUrlInput;
+      img.src = base64Str;
       img.onerror = () => {
         console.error('[Recipes] Image load error');
         reject(new Error('Failed to load image for processing'));
@@ -381,13 +281,13 @@ export const Recipes = () => {
             return;
           }
           ctx.drawImage(img, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
           const base64 = dataUrl.split(',')[1];
           if (!base64) {
             reject(new Error('Failed to generate base64 from canvas'));
             return;
           }
-          resolve({ dataUrl, base64 });
+          resolve(base64);
         } catch (err) {
           console.error('[Recipes] Canvas processing error:', err);
           reject(err);
@@ -420,10 +320,9 @@ export const Recipes = () => {
       setImporting(true);
       try {
         console.log('[Recipes] Resizing image for Gemini...');
-        const { dataUrl: thumbnailDataUrl, base64 } = await resizeImage(result).catch((err) => {
+        const base64 = await resizeImage(result).catch(err => {
           console.warn('[Recipes] Resize failed, falling back to original:', err);
-          const raw = result.includes('base64,') ? result.split('base64,')[1] : result;
-          return { dataUrl: result.startsWith('data:') ? result : `data:image/jpeg;base64,${raw}`, base64: raw };
+          return result.split(',')[1];
         });
         
         console.log('[Recipes] Extracting from image...');
@@ -437,8 +336,7 @@ export const Recipes = () => {
           instructions: extracted.instructions || [],
           nutritionalInfo: extracted.nutritionalInfo,
           isFavorite: false,
-          /** Card image: the photo the user imported (Pinterest-style pin from image). */
-          imageUrl: thumbnailDataUrl,
+          imageUrl: extracted.imageUrl,
           createdAt: new Date().toISOString(),
         };
         const recipe: Omit<Recipe, "id"> = {
@@ -580,21 +478,10 @@ export const Recipes = () => {
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
         <Input 
           placeholder="Search recipes, ingredients..." 
-          className="pl-12 pr-12 h-14 rounded-2xl border-border bg-background/70 backdrop-blur-sm shadow-sm focus-visible:ring-primary"
+          className="pl-12 h-14 rounded-2xl border-border bg-background/70 backdrop-blur-sm shadow-sm focus-visible:ring-primary"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {search.trim() && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className="absolute right-12 top-1/2 -translate-y-1/2 h-10 w-10 text-muted-foreground hover:bg-muted rounded-xl"
-            onClick={() => setSearch('')}
-            aria-label="Clear search"
-          >
-            <X className="h-5 w-5" />
-          </Button>
-        )}
         <Button
           size="icon"
           variant="ghost"
@@ -660,11 +547,6 @@ export const Recipes = () => {
         <div className="py-20 flex flex-col items-center justify-center gap-4 text-muted-foreground/40">
           <Loader2 className="h-10 w-10 animate-spin" />
           <p className="font-medium italic">Opening the vault...</p>
-        </div>
-      ) : filteredRecipes.length === 0 ? (
-        <div className="py-16 text-center space-y-2">
-          <p className="text-lg font-semibold text-primary">No recipes match your search</p>
-          <p className="text-sm text-muted-foreground">Try a different term or clear filters.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -828,32 +710,11 @@ export const Recipes = () => {
 
               <div className="space-y-6">
                 <div>
-                   <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                     <h3 className="font-heading text-xl sm:text-2xl font-bold text-primary">Ingredients</h3>
-                     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                       <div
-                         className="inline-flex rounded-2xl border border-border/60 bg-muted/50 p-1"
-                         role="group"
-                         aria-label="Scale ingredient amounts"
-                       >
-                         {([1, 2, 3] as const).map((m) => (
-                           <Button
-                             key={m}
-                             type="button"
-                             variant={recipeScale === m ? 'default' : 'ghost'}
-                             size="sm"
-                             className="h-9 min-w-[2.75rem] rounded-xl px-3 text-xs font-bold sm:text-sm"
-                             aria-pressed={recipeScale === m}
-                             onClick={() => setRecipeScale(m)}
-                           >
-                             {m}X
-                           </Button>
-                         ))}
-                       </div>
-                       <Badge variant="outline" className="rounded-full border-border text-primary bg-muted font-semibold">
-                         {activeRecipe?.ingredients.length} items
-                       </Badge>
-                     </div>
+                   <div className="flex items-center justify-between mb-4">
+                     <h3 className="font-heading text-xl sm:text-2xl font-bold flex items-center gap-2 text-primary">Ingredients</h3>
+                     <Badge variant="outline" className="rounded-full border-border text-primary bg-muted font-semibold">
+                       {activeRecipe?.ingredients.length} items
+                     </Badge>
                    </div>
                    <div className="grid gap-2 sm:gap-3">
                      {activeRecipe?.ingredients.map((ing, i) => (
@@ -862,10 +723,7 @@ export const Recipes = () => {
                            <div className="w-1.5 h-1.5 rounded-full bg-primary/60" />
                            <span className="font-medium text-primary text-sm sm:text-base">{ing.name}</span>
                          </div>
-                         <span className="text-primary font-semibold px-2 sm:px-3 py-1 bg-muted rounded-full text-xs sm:text-sm whitespace-nowrap">
-                           {scaleIngredientAmount(ing.amount, recipeScale)}
-                           {ing.unit ? ` ${ing.unit}` : ''}
-                         </span>
+                         <span className="text-primary font-semibold px-2 sm:px-3 py-1 bg-muted rounded-full text-xs sm:text-sm whitespace-nowrap">{ing.amount} {ing.unit}</span>
                        </div>
                      ))}
                    </div>
@@ -886,121 +744,13 @@ export const Recipes = () => {
                 </div>
               </div>
 
-              {addToPlanUiOpen && (
-                <div
-                  className="rounded-2xl border border-primary/20 bg-muted/40 p-5 sm:p-6 space-y-5"
-                  data-testid="recipes-add-plan-panel"
-                >
-                  <div>
-                    <h3 className="font-heading text-lg font-bold text-primary">When is this meal?</h3>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Pick a day and slot. Defaults come from this recipe (or your planner if you opened this from a day).
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Day</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {Array.from({ length: 7 }, (_, i) => {
-                        const d = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), i);
-                        const iso = format(d, 'yyyy-MM-dd');
-                        return (
-                          <Button
-                            key={iso}
-                            type="button"
-                            variant={planDateIso === iso ? 'default' : 'outline'}
-                            size="sm"
-                            className="rounded-xl shrink-0"
-                            data-testid={`recipes-add-plan-day-${iso}`}
-                            onClick={() => setPlanDateIso(iso)}
-                          >
-                            <span className="font-semibold">{format(d, 'EEE')}</span>
-                            <span className="text-muted-foreground font-normal ml-1">{format(d, 'M/d')}</span>
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Meal</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map((t) => (
-                        <Button
-                          key={t}
-                          type="button"
-                          variant={planMealType === t ? 'default' : 'outline'}
-                          size="sm"
-                          className="rounded-xl capitalize"
-                          data-testid={`recipes-add-plan-meal-${t}`}
-                          onClick={() => {
-                            setPlanMealType(t);
-                            if (t === 'snack') setPlanSlot('snack');
-                            else if (planSlot === 'snack') setPlanSlot('main');
-                          }}
-                        >
-                          {t}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                  {planMealType !== 'snack' && (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Course</Label>
-                      <div className="flex flex-wrap gap-2">
-                        {ALL_MEAL_SLOTS.map((s) => (
-                          <Button
-                            key={s}
-                            type="button"
-                            variant={planSlot === s ? 'default' : 'outline'}
-                            size="sm"
-                            className="rounded-xl capitalize"
-                            data-testid={`recipes-add-plan-slot-${s}`}
-                            onClick={() => setPlanSlot(s)}
-                          >
-                            {s}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
               <div className="pt-8 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                {addToPlanUiOpen ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      className="rounded-xl h-12 order-2 sm:order-1"
-                      type="button"
-                      data-testid="recipes-add-plan-back"
-                      onClick={() => setAddToPlanUiOpen(false)}
-                    >
-                      Back
-                    </Button>
-                    <Button
-                      className="rounded-xl h-12 bg-primary order-1 sm:order-2"
-                      type="button"
-                      data-testid="recipes-add-plan-confirm"
-                      onClick={confirmAddToMealPlan}
-                    >
-                      Add to plan
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button variant="outline" className="rounded-xl h-12 order-2 sm:order-1" onClick={() => deleteRecipe(activeRecipe!.id!)}>
-                      <Trash2 className="h-4 w-4 mr-2" /> Delete Recipe
-                    </Button>
-                    <Button
-                      className="rounded-xl h-12 bg-primary order-1 sm:order-2"
-                      type="button"
-                      data-testid="recipes-add-to-plan-open"
-                      onClick={beginAddToMealPlan}
-                    >
-                      Add to Meal Plan
-                    </Button>
-                  </>
-                )}
+                <Button variant="outline" className="rounded-xl h-12 order-2 sm:order-1" onClick={() => deleteRecipe(activeRecipe!.id!)}>
+                  <Trash2 className="h-4 w-4 mr-2" /> Delete Recipe
+                </Button>
+                <Button className="rounded-xl h-12 bg-primary order-1 sm:order-2" onClick={() => addRecipeToMealPlan(activeRecipe!)}>
+                  Add to Meal Plan
+                </Button>
               </div>
             </div>
           </div>

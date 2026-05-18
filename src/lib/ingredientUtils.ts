@@ -132,129 +132,15 @@ export function deriveRecipeTags(recipe: Pick<Recipe, 'title' | 'category' | 'de
 }
 
 /**
- * Optional placeholder when a recipe has no image (e.g. text-only import).
- * URL imports should set `imageUrl` from the source page (Open Graph) on the server instead.
+ * Minimal, no-key “web” image fallback using a predictable remote source.
+ * This returns a low-res URL intended for use as a header image.
  */
-export function suggestRecipeImageUrl(_recipe: Pick<Recipe, 'title' | 'category'>): string | undefined {
-  return undefined;
-}
-
-const UNICODE_FRAC_PAIRS: [string, string][] = [
-  ['\u00BC', '1/4'],
-  ['\u00BD', '1/2'],
-  ['\u00BE', '3/4'],
-  ['\u2153', '1/3'],
-  ['\u2154', '2/3'],
-  ['\u215B', '1/8'],
-  ['\u215C', '3/8'],
-  ['\u215D', '5/8'],
-  ['\u215E', '7/8'],
-];
-
-function replaceUnicodeFractions(s: string): string {
-  let t = s.replace(/\u00a0/g, ' ');
-  for (const [u, a] of UNICODE_FRAC_PAIRS) t = t.split(u).join(a);
-  return t.trim();
-}
-
-function gcd(a: number, b: number): number {
-  let x = Math.abs(Math.round(a));
-  let y = Math.abs(Math.round(b));
-  while (y) {
-    const t = y;
-    y = x % y;
-    x = t;
-  }
-  return x || 1;
-}
-
-function fractionToString(frac: number, maxDen = 16): string {
-  if (frac < 1e-9) return '0';
-  let bestNum = 0;
-  let bestDen = 1;
-  let bestErr = Infinity;
-  for (let den = 1; den <= maxDen; den++) {
-    const num = Math.round(frac * den);
-    if (num < 0 || num > den) continue;
-    const err = Math.abs(frac - num / den);
-    if (err < bestErr) {
-      bestErr = err;
-      bestNum = num;
-      bestDen = den;
-    }
-  }
-  if (bestErr > 0.06) {
-    const rounded = Math.round(frac * 100) / 100;
-    return String(rounded);
-  }
-  const g = gcd(bestNum, bestDen);
-  bestNum /= g;
-  bestDen /= g;
-  if (bestNum === 0) return '0';
-  if (bestNum === bestDen) return '1';
-  return `${bestNum}/${bestDen}`;
-}
-
-function formatCookingNumber(n: number): string {
-  if (!Number.isFinite(n)) return '';
-  const sign = n < 0 ? '-' : '';
-  let v = Math.abs(n);
-  if (v < 1e-9) return `${sign}0`;
-  let whole = Math.floor(v + 1e-9);
-  let frac = v - whole;
-  if (frac > 1 - 1e-6) {
-    whole += 1;
-    frac = 0;
-  }
-  const fs = fractionToString(frac);
-  if (whole === 0) return sign + (fs === '0' ? '0' : fs);
-  if (fs === '0' || frac < 1e-6) return `${sign}${whole}`;
-  return `${sign}${whole} ${fs}`;
-}
-
-function parseSingleAmountToNumber(s: string): number | null {
-  const t = replaceUnicodeFractions(s).replace(/,/g, '').trim();
-  if (!t) return null;
-  if (/^(to taste|as needed|a pinch|pinch|dash|few|several|some|handful)$/i.test(t)) return null;
-
-  const mixed = /^(\d+)\s+(\d+)\/(\d+)$/.exec(t);
-  if (mixed) {
-    const w = parseInt(mixed[1], 10);
-    const num = parseInt(mixed[2], 10);
-    const den = parseInt(mixed[3], 10);
-    if (!Number.isFinite(w) || !Number.isFinite(num) || !Number.isFinite(den) || den === 0) return null;
-    return w + num / den;
-  }
-  const frac = /^(\d+)\/(\d+)$/.exec(t);
-  if (frac) {
-    const num = parseInt(frac[1], 10);
-    const den = parseInt(frac[2], 10);
-    if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) return null;
-    return num / den;
-  }
-  const dec = /^(\d+(?:\.\d+)?)$/.exec(t);
-  if (dec) return parseFloat(dec[1]);
-  return null;
-}
-
-/**
- * Scale a recipe `amount` string for batch display (1×, 2×, 3×).
- * Non-numeric phrases (e.g. "to taste") are returned unchanged.
- */
-export function scaleIngredientAmount(amount: string, multiplier: number): string {
-  const raw = typeof amount === 'string' ? amount.trim() : '';
-  if (multiplier === 1 || !raw) return raw;
-  const normalized = replaceUnicodeFractions(raw);
-  const rangeParts = normalized.split(/\s*-\s/).map((p) => p.trim());
-  if (rangeParts.length === 2) {
-    const a = parseSingleAmountToNumber(rangeParts[0]);
-    const b = parseSingleAmountToNumber(rangeParts[1]);
-    if (a !== null && b !== null) {
-      return `${formatCookingNumber(a * multiplier)} - ${formatCookingNumber(b * multiplier)}`;
-    }
-  }
-  const n = parseSingleAmountToNumber(normalized);
-  if (n === null) return raw;
-  return formatCookingNumber(n * multiplier);
+export function suggestRecipeImageUrl(recipe: Pick<Recipe, 'title' | 'category'>): string {
+  const query = encodeURIComponent(
+    [safeTrim(recipe.title), safeTrim(recipe.category)].filter(Boolean).join(' ').trim() || 'recipe'
+  );
+  // Note: `images.weserv.nl` provides simple resizing proxying without keys.
+  const upstream = `https://source.unsplash.com/featured/?${query}`;
+  return `https://images.weserv.nl/?url=${encodeURIComponent(upstream)}&w=800&h=450&fit=cover&q=55`;
 }
 

@@ -4,12 +4,11 @@ import { AuthContext } from '../components/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ChefHat, Calendar, ArrowRight, Star, Plus, X, ChevronLeft, ChevronsDown, ChevronsUp } from 'lucide-react';
+import { ChefHat, Calendar, TrendingUp, DollarSign, ArrowRight, Star, Plus, X, ChevronLeft } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { Recipe, MealPlan } from '../types';
-import { format, isToday, subDays, parseISO, isAfter } from 'date-fns';
+import { format, isToday } from 'date-fns';
 import { Tab } from '../components/Navigation';
-import { ALL_MEAL_SLOTS, DEFAULT_VISIBLE_MEAL_SLOTS, EXTRA_MEAL_SLOTS, mealSlotExpandKey } from '../lib/mealPlanSlots';
 
 type DashboardProps = {
   navigate: (tab: Tab) => void;
@@ -19,8 +18,7 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
   const { user, profile } = useContext(AuthContext);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [activePlan, setActivePlan] = useState<MealPlan | null>(null);
-  const [view, setView] = useState<'home' | 'recipes' | 'favorites' | 'viewWeek'>('home');
-  const [mealSlotListExpanded, setMealSlotListExpanded] = useState<Record<string, boolean>>({});
+  const [view, setView] = useState<'home' | 'recipes' | 'favorites' | 'budget' | 'nutrition' | 'viewWeek'>('home');
 
   useEffect(() => {
     if (user) {
@@ -34,16 +32,6 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
   const todayIso = format(new Date(), 'yyyy-MM-dd');
   const todaysMeals = activePlan?.days.find(d => d.date === todayIso)?.meals || [];
   const nextMeal = todaysMeals[0]; // Simplistic logic for "Next"
-  const greetingName =
-    profile?.displayName?.split(' ')[0] ||
-    (user as { displayName?: string } | null)?.displayName?.split(' ')[0] ||
-    'there';
-  const weekStart = subDays(new Date(), 7);
-  const recipesAddedThisWeek = recipes.filter((recipe) => {
-    if (!recipe.createdAt) return false;
-    const created = parseISO(recipe.createdAt);
-    return isAfter(created, weekStart) || created.getTime() === weekStart.getTime();
-  }).length;
 
   const openAddRecipe = () => {
     sessionStorage.setItem('bb:recipes:openAdd', '1');
@@ -91,7 +79,7 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
       {/* Greeting */}
       <div>
         <h1 className="font-heading text-4xl font-black tracking-tight text-primary">
-          Welcome, {greetingName}
+          Welcome, {profile?.displayName?.split(' ')[0]}
         </h1>
         <p className="text-lg text-muted-foreground">Ready for a smart kitchen today?</p>
       </div>
@@ -99,9 +87,8 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
       {/* Main Action Card: Current Meal */}
       <Card className="rounded-[1.75rem] border-none bg-primary text-primary-foreground shadow-[0_24px_60px_-30px_rgba(47,53,59,0.35)] overflow-hidden">
         <CardContent className="p-8 relative">
-          {/* pointer-events-none so this layer never steals clicks from the CTA row */}
-          <Utensils className="pointer-events-none absolute -right-8 -top-8 h-48 w-48 opacity-10 rotate-12" />
-          <div className="relative z-10 space-y-1 mb-8">
+          <Utensils className="absolute -right-8 -top-8 h-48 w-48 opacity-10 rotate-12" />
+          <div className="space-y-1 mb-8">
             <span className="font-label text-xs uppercase tracking-[0.22em] font-semibold text-primary-foreground/80 bg-black/10 px-3 py-1 rounded-full w-fit">
               Next Serving
             </span>
@@ -109,7 +96,7 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
               {nextMeal?.recipeTitle || 'No meal scheduled'}
             </h2>
           </div>
-          <div className="relative z-10 flex items-center gap-6">
+          <div className="flex items-center gap-6">
              <div className="flex flex-col">
                <span className="font-label text-[10px] uppercase font-semibold tracking-widest text-primary-foreground/70">Prepare</span>
                <span className="text-xl font-bold">~35 min</span>
@@ -119,7 +106,7 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
                <span className="text-xl font-bold">Easy</span>
              </div>
              <Button
-               className="relative z-20 ml-auto rounded-2xl bg-background text-primary hover:bg-background/90 h-12 px-6 font-semibold shadow-sm"
+               className="ml-auto rounded-2xl bg-background text-primary hover:bg-background/90 h-12 px-6 font-semibold shadow-sm"
                onClick={handleLetsCook}
                data-testid="dashboard-lets-cook"
              >
@@ -131,9 +118,11 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
 
       {/* Stats Grid / Details */}
       {view === 'home' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <StatCard icon={ChefHat} label="Recipes" value={recipes.length.toString()} trend={recipesAddedThisWeek > 0 ? `+${recipesAddedThisWeek} this week` : undefined} color="bg-muted text-primary" onClick={() => setView('recipes')} />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard icon={ChefHat} label="Recipes" value={recipes.length.toString()} trend="+2 this week" color="bg-muted text-primary" onClick={() => setView('recipes')} />
           <StatCard icon={Star} label="Favorites" value={recipes.filter(r => r.isFavorite).length.toString()} color="bg-muted text-primary" onClick={() => setView('favorites')} />
+          <StatCard icon={DollarSign} label="Weekly Budget" value="$140" trend="On Track" color="bg-muted text-primary" onClick={() => setView('budget')} />
+          <StatCard icon={TrendingUp} label="Nutrition" value="B+" trend="Improving" color="bg-muted text-primary" onClick={() => setView('nutrition')} />
         </div>
       ) : (
         <Card className="rounded-[1.75rem] border border-border/50 shadow-sm bg-card overflow-hidden">
@@ -143,7 +132,7 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
                 <ChevronLeft className="h-5 w-5" />
               </Button>
               <CardTitle className="text-xl font-bold text-primary">
-                {view === 'recipes' ? 'Recipes' : view === 'favorites' ? 'Favorites' : 'View Week'}
+                {view === 'recipes' ? 'Recipes' : view === 'favorites' ? 'Favorites' : view === 'budget' ? 'Weekly Budget' : view === 'nutrition' ? 'Nutrition' : 'View Week'}
               </CardTitle>
             </div>
             {view === 'recipes' && (
@@ -178,6 +167,22 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
                   ))}
                   {recipes.filter((r) => r.isFavorite).length === 0 && <p className="text-sm text-muted-foreground italic">No favorites yet.</p>}
                 </div>
+              </div>
+            )}
+            {view === 'budget' && (
+              <div className="space-y-3">
+                <p className="text-muted-foreground">Weekly budget tracking is coming next. For now, Shopping groups items by category to make cost estimation easier.</p>
+                <Button variant="outline" className="rounded-2xl" onClick={() => navigate('shopping')}>
+                  Open Shopping <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            {view === 'nutrition' && (
+              <div className="space-y-3">
+                <p className="text-muted-foreground">Nutrition insights are currently based on recipe metadata. Import more recipes with nutrition info for better accuracy.</p>
+                <Button variant="outline" className="rounded-2xl" onClick={() => navigate('recipes')}>
+                  Review Recipes <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
               </div>
             )}
             {view === 'viewWeek' && (
@@ -218,12 +223,7 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
           <div className="grid gap-4">
             {(['breakfast', 'lunch', 'dinner'] as const).map((type) => {
               const mealsOfType = todaysMeals.filter((m) => m.type === type);
-              const expandKey = mealSlotExpandKey(todayIso, type);
-              const expanded = mealSlotListExpanded[expandKey] === true;
-              const slots = expanded ? ALL_MEAL_SLOTS : DEFAULT_VISIBLE_MEAL_SLOTS;
-              const extraSlotHasMeals = EXTRA_MEAL_SLOTS.some((slot) =>
-                mealsOfType.some((m) => (m.slot || 'main') === slot)
-              );
+              const slots = ['main', 'appetizer', 'drink', 'side', 'dessert'] as const;
               return (
                 <Card key={type} className="rounded-[1.5rem] border border-border/50 shadow-sm bg-card overflow-hidden">
                   <CardHeader className="pb-3">
@@ -266,51 +266,6 @@ export const Dashboard = ({ navigate }: DashboardProps) => {
                         </div>
                       );
                     })}
-                    {!expanded && (
-                      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between pt-1">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="rounded-xl border-dashed"
-                          aria-expanded={false}
-                          onClick={() =>
-                            setMealSlotListExpanded((prev) => ({
-                              ...prev,
-                              [expandKey]: true,
-                            }))
-                          }
-                        >
-                          <ChevronsDown className="mr-2 h-4 w-4" />
-                          EXPAND LIST
-                        </Button>
-                        {extraSlotHasMeals && (
-                          <p className="text-center text-[11px] text-muted-foreground sm:text-right">
-                            Appetizer, drink, or dessert slots have items — expand to view.
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {expanded && (
-                      <div className="pt-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="rounded-xl text-muted-foreground"
-                          aria-expanded
-                          onClick={() =>
-                            setMealSlotListExpanded((prev) => ({
-                              ...prev,
-                              [expandKey]: false,
-                            }))
-                          }
-                        >
-                          <ChevronsUp className="mr-2 h-4 w-4" />
-                          COLLAPSE LIST
-                        </Button>
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
               );
