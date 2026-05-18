@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "pnpm": {
+    "onlyBuiltDependencies": ["@firebase/util", "@google/genai", "esbuild", "msw", "protobufjs", "sharp"]
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "start": "node build/server.js",
