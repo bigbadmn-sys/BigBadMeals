@@ -51,7 +51,8 @@ export const firestoreService = {
       const snap = await getDoc(doc(db, 'users', uid));
       return snap.exists() ? snap.data() as UserProfile : null;
     } catch (e) {
-      handleFirestoreError(e, OperationType.GET, path);
+      // Do not throw: callers (e.g. auth bootstrap) must finish and clear loading UI.
+      console.error('[Firestore] getUserProfile failed', path, e);
       return null;
     }
   },

@@ -1,23 +1,40 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../components/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { User, Users, Plus, X, Heart, ShieldAlert, LogOut, Save, Activity, CheckCircle2, XCircle } from 'lucide-react';
+import { User, Users, Plus, X, Heart, ShieldAlert, LogOut, Save, Activity, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { toast } from 'sonner';
 import { testAiIntegration } from '../lib/aiTest';
 import { testConnection } from '../lib/firebaseTest';
 
+function splitPreferenceList(value: string): string[] {
+  return value.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 export const Profile = () => {
   const { profile, logout, refreshProfile } = useContext(AuthContext);
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState(profile);
+  const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResults, setTestResults] = useState<{ai?: any, firebase?: any, error?: string} | null>(null);
 
-  if (!profile) return null;
+  useEffect(() => {
+    if (profile && !editing) {
+      setFormData(profile);
+    }
+  }, [profile, editing]);
+
+  if (!profile) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center p-6">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   const runDiagnostics = async () => {
     setTesting(true);
@@ -41,6 +58,7 @@ export const Profile = () => {
 
   const handleSave = async () => {
     if (!formData) return;
+    setSaving(true);
     try {
       await dataService.saveUserProfile(formData);
       await refreshProfile();
@@ -48,6 +66,8 @@ export const Profile = () => {
       toast.success('Preferences updated!');
     } catch (e) {
       toast.error('Failed to save profile');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -95,10 +115,20 @@ export const Profile = () => {
               <CardDescription>{profile.email}</CardDescription>
             </div>
             {!editing ? (
-              <Button onClick={() => setEditing(true)} variant="secondary" className="rounded-xl bg-background shadow-sm border border-border">Edit</Button>
+              <Button
+                onClick={() => {
+                  setFormData(profile);
+                  setEditing(true);
+                }}
+                variant="secondary"
+                className="rounded-xl bg-background shadow-sm border border-border"
+              >
+                Edit
+              </Button>
             ) : (
-              <Button onClick={handleSave} className="rounded-xl bg-primary hover:bg-primary/90">
-                <Save className="h-4 w-4 mr-2" /> Save
+              <Button onClick={handleSave} disabled={saving} className="rounded-xl bg-primary hover:bg-primary/90">
+                {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                Save
               </Button>
             )}
           </div>
@@ -111,7 +141,7 @@ export const Profile = () => {
                 disabled={!editing}
                 placeholder="e.g. Vegan, Keto, Nut-free" 
                 value={formData?.globalPreferences.dietaryRestrictions.join(', ')}
-                onChange={(e) => setFormData({...formData!, globalPreferences: {...formData!.globalPreferences, dietaryRestrictions: e.target.value.split(',').map(s => s.trim())}})}
+                onChange={(e) => setFormData({...formData!, globalPreferences: {...formData!.globalPreferences, dietaryRestrictions: splitPreferenceList(e.target.value)}})}
                 className="rounded-xl border-border focus-visible:ring-primary bg-background/60"
               />
             </div>
@@ -121,7 +151,7 @@ export const Profile = () => {
                 disabled={!editing}
                 placeholder="e.g. Italian, Mexican, Thai" 
                 value={formData?.globalPreferences.cuisines.join(', ')}
-                onChange={(e) => setFormData({...formData!, globalPreferences: {...formData!.globalPreferences, cuisines: e.target.value.split(',').map(s => s.trim())}})}
+                onChange={(e) => setFormData({...formData!, globalPreferences: {...formData!.globalPreferences, cuisines: splitPreferenceList(e.target.value)}})}
                 className="rounded-xl border-border focus-visible:ring-primary bg-background/60"
               />
             </div>
@@ -183,7 +213,7 @@ export const Profile = () => {
                     <Input 
                       disabled={!editing}
                       value={member.preferences.join(', ')}
-                      onChange={(e) => updateFamilyMember(i, 'preferences', e.target.value.split(',').map(s => s.trim()))}
+                      onChange={(e) => updateFamilyMember(i, 'preferences', splitPreferenceList(e.target.value))}
                       className="text-xs border-none bg-muted/60 rounded-xl px-3"
                       placeholder="e.g. Pasta, Fruit"
                     />
@@ -195,7 +225,7 @@ export const Profile = () => {
                     <Input 
                       disabled={!editing}
                       value={member.allergies.join(', ')}
-                      onChange={(e) => updateFamilyMember(i, 'allergies', e.target.value.split(',').map(s => s.trim()))}
+                      onChange={(e) => updateFamilyMember(i, 'allergies', splitPreferenceList(e.target.value))}
                       className="text-xs border-none bg-red-50/50 rounded-xl px-3"
                       placeholder="e.g. Shellfish"
                     />

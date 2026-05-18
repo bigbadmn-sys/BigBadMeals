@@ -1,9 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import {
+  onAuthStateChanged,
+  User,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+  signOut,
+} from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { Button } from '@/components/ui/button';
 import { LogIn, Loader2 } from 'lucide-react';
-import { firestoreService } from '../services/firestoreService';
+import { dataService } from '../services/dataService';
 import { UserProfile } from '../types';
 
 interface AuthContextType {
@@ -42,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (import.meta.env.VITE_DISABLE_AUTH === 'true') {
       const testUser = { uid: 'test-user', email: 'test@example.com', displayName: 'Test User' } as unknown as User;
-      const testProfile: UserProfile = {
+      const fallbackProfile: UserProfile = {
         uid: 'test-user',
         email: 'test@example.com',
         displayName: 'Test User',
@@ -51,8 +58,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         inventory: [],
       };
       setUser(testUser);
-      setProfile(testProfile);
-      setLoading(false);
+      void (async () => {
+        try {
+          const stored = await dataService.getUserProfile('test-user');
+          setProfile(stored ?? fallbackProfile);
+        } catch (e) {
+          console.warn('[Auth] Failed to load local test profile', e);
+          setProfile(fallbackProfile);
+        } finally {
+          setLoading(false);
+        }
+      })();
       return;
     }
 
@@ -89,15 +105,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        const p = await firestoreService.getUserProfile(u.uid);
-        if (p) {
-          setProfile(p);
-        } else {
-          // Initialize fresh profile
-          const newProfile: UserProfile = {
+    const PROFILE_BOOTSTRAP_MS = 15_000;
+
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
+
+    const attachListener = () => {
+      unsub = onAuthStateChanged(auth, async (u) => {
+        try {
+          setUser(u);
+          if (!u) {
+            setProfile(null);
+            return;
+          }
+
+          const minimalProfile = (): UserProfile => ({
             uid: u.uid,
             email: u.email || '',
             displayName: u.displayName || 'User',
@@ -105,24 +127,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             globalPreferences: {
               cuisines: [],
               dietaryRestrictions: [],
-              budgetLimit: 0
+              budgetLimit: 0,
             },
-            inventory: []
+            inventory: [],
+          });
+
+          const bootstrap = async () => {
+            const p = await dataService.getUserProfile(u.uid);
+            if (p) {
+              setProfile(p);
+              return;
+            }
+            const newProfile = minimalProfile();
+            await dataService.saveUserProfile(newProfile);
+            setProfile(newProfile);
           };
-          await firestoreService.saveUserProfile(newProfile);
-          setProfile(newProfile);
+
+          try {
+            await Promise.race([
+              bootstrap(),
+              new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('profile_bootstrap_timeout')), PROFILE_BOOTSTRAP_MS);
+              }),
+            ]);
+          } catch (e) {
+            console.warn('[Auth] Profile bootstrap failed or timed out; using local minimal profile.', e);
+            setProfile(minimalProfile());
+          }
+        } finally {
+          setLoading(false);
         }
-      } else {
-        setProfile(null);
+      });
+    };
+
+    void (async () => {
+      try {
+        await getRedirectResult(auth);
+      } catch (e) {
+        console.warn('[Auth] getRedirectResult (ignored if no redirect pending)', e);
       }
-      setLoading(false);
-    });
-    return unsub;
+      if (cancelled) return;
+      attachListener();
+    })();
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, []);
 
   const signIn = async () => {
     const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    // Full-window redirect avoids popup/handler postMessage issues (e.g. embedded or strict browsers).
+    await signInWithRedirect(auth, provider);
   };
 
   const e2eSignIn = async () => {
@@ -160,9 +217,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshProfile = async () => {
-    if (user) {
-      const p = await firestoreService.getUserProfile(user.uid);
-      setProfile(p);
+    if (!user) return;
+    try {
+      const p = await dataService.getUserProfile(user.uid);
+      if (p) setProfile(p);
+    } catch (e) {
+      console.warn('[Auth] refreshProfile failed; keeping current profile', e);
     }
   };
 
@@ -204,8 +264,8 @@ export const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children })
             Continue as E2E user
           </Button>
         )}
-        <Button 
-          onClick={signIn} 
+        <Button
+          onClick={signIn}
           className="w-full max-w-xs h-14 text-lg bg-[#d97706] hover:bg-[#b45309] text-white shadow-xl rounded-2xl"
         >
           <LogIn className="mr-2 h-5 w-5" />
