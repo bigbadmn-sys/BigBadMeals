@@ -129,6 +129,11 @@ export const Shopping = () => {
     toast.success('Deleted list');
   };
 
+  const formatShoppingQuantity = (amount: string, unit: string) => {
+    const parts = [amount.trim(), unit.trim()].filter(Boolean);
+    return parts.length > 0 ? parts.join(' ') : 'Qty not specified';
+  };
+
   return (
     <div className="p-6 pb-24 space-y-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between">
@@ -146,11 +151,16 @@ export const Shopping = () => {
         </Button>
       </div>
 
-      {!activeList ? (
+      {!loading && !activeList ? (
         <div className="py-20 text-center space-y-4">
           <ShoppingBasket className="h-16 w-16 mx-auto text-muted-foreground/30" />
           <p className="text-lg text-muted-foreground">Your cart is empty.</p>
           <Button onClick={generateFromPlan} className="rounded-xl bg-primary hover:bg-primary/90">Sync from latest plan</Button>
+        </div>
+      ) : loading ? (
+        <div className="py-20 flex flex-col items-center justify-center gap-4 text-muted-foreground/40">
+          <Loader2 className="h-10 w-10 animate-spin" />
+          <p className="font-medium italic">Loading your list...</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -162,19 +172,22 @@ export const Shopping = () => {
           <Card className="rounded-[1.75rem] border border-border/50 shadow-sm bg-card overflow-hidden">
             <CardContent className="p-6 space-y-1">
               {activeList.items.map((item, i) => (
-                <div 
-                  key={i} 
+                <div
+                  key={i}
                   className={cn(
-                    "flex items-center gap-4 py-4 px-2 hover:bg-muted/50 rounded-2xl transition-colors group",
-                    item.checked && "opacity-50"
+                    'flex items-center gap-4 py-4 px-2 hover:bg-muted/50 rounded-2xl transition-colors group',
+                    item.checked && 'opacity-50'
                   )}
-                  onClick={() => toggleItem(i)}
                 >
-                  <Checkbox checked={item.checked} className="h-6 w-6 rounded-lg border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary" />
-                  <div className="flex-1">
-                    <p className={cn("font-bold text-lg", item.checked && "line-through")}>{item.name}</p>
-                    <p className="text-sm text-muted-foreground">{item.amount} {item.unit}</p>
-                  </div>
+                  <Checkbox
+                    checked={item.checked}
+                    onCheckedChange={() => toggleItem(i)}
+                    className="h-6 w-6 rounded-lg border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                  />
+                  <button type="button" className="flex-1 text-left" onClick={() => toggleItem(i)}>
+                    <p className={cn('font-bold text-lg', item.checked && 'line-through')}>{item.name}</p>
+                    <p className="text-sm text-muted-foreground">{formatShoppingQuantity(item.amount, item.unit)}</p>
+                  </button>
                   <Badge className="bg-muted text-primary border-none rounded-lg group-hover:bg-muted/80">{item.category}</Badge>
                 </div>
               ))}

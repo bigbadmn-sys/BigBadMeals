@@ -10,7 +10,7 @@ import {
 import { auth } from '../lib/firebase';
 import { Button } from '@/components/ui/button';
 import { LogIn, Loader2 } from 'lucide-react';
-import { firestoreService } from '../services/firestoreService';
+import { dataService } from '../services/dataService';
 import { UserProfile } from '../types';
 
 interface AuthContextType {
@@ -49,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (import.meta.env.VITE_DISABLE_AUTH === 'true') {
       const testUser = { uid: 'test-user', email: 'test@example.com', displayName: 'Test User' } as unknown as User;
-      const testProfile: UserProfile = {
+      const fallbackProfile: UserProfile = {
         uid: 'test-user',
         email: 'test@example.com',
         displayName: 'Test User',
@@ -58,8 +58,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         inventory: [],
       };
       setUser(testUser);
-      setProfile(testProfile);
-      setLoading(false);
+      void (async () => {
+        try {
+          const stored = await dataService.getUserProfile('test-user');
+          setProfile(stored ?? fallbackProfile);
+        } catch (e) {
+          console.warn('[Auth] Failed to load local test profile', e);
+          setProfile(fallbackProfile);
+        } finally {
+          setLoading(false);
+        }
+      })();
       return;
     }
 
@@ -124,13 +133,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
 
           const bootstrap = async () => {
-            const p = await firestoreService.getUserProfile(u.uid);
+            const p = await dataService.getUserProfile(u.uid);
             if (p) {
               setProfile(p);
               return;
             }
             const newProfile = minimalProfile();
-            await firestoreService.saveUserProfile(newProfile);
+            await dataService.saveUserProfile(newProfile);
             setProfile(newProfile);
           };
 
@@ -208,9 +217,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshProfile = async () => {
-    if (user) {
-      const p = await firestoreService.getUserProfile(user.uid);
-      setProfile(p);
+    if (!user) return;
+    try {
+      const p = await dataService.getUserProfile(user.uid);
+      if (p) setProfile(p);
+    } catch (e) {
+      console.warn('[Auth] refreshProfile failed; keeping current profile', e);
     }
   };
 

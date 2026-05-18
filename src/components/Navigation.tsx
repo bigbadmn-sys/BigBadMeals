@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, UtensilsCrossed, Calendar, ShoppingCart, User, Plus } from 'lucide-react';
+import { Home, UtensilsCrossed, Calendar, ShoppingCart, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export type Tab = 'dashboard' | 'recipes' | 'planner' | 'shopping' | 'profile';
@@ -30,22 +30,33 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
         return (
           <button
             key={item.id}
+            type="button"
             onClick={() => setActiveTab(item.id as Tab)}
             data-testid={`nav-${item.id}`}
+            aria-current={isActive ? 'page' : undefined}
             className={cn(
-              "group flex flex-col items-center justify-center space-y-1 transition-all duration-300",
-              isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+              'group flex min-w-[3.5rem] flex-col items-center justify-center space-y-1 transition-all duration-300',
+              isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
             )}
           >
             <div
               className={cn(
-                "rounded-2xl p-2 transition-all duration-300 group-hover:text-primary/80",
-                isActive ? "bg-muted scale-110 shadow-sm shadow-black/5" : ""
+                'rounded-2xl p-2 transition-all duration-300',
+                isActive
+                  ? 'bg-primary text-primary-foreground shadow-md ring-2 ring-primary/25 scale-105'
+                  : 'text-current group-hover:bg-muted/90 group-hover:text-foreground'
               )}
             >
-              <Icon className="h-6 w-6" />
+              <Icon className="h-6 w-6" aria-hidden />
             </div>
-            <span className="font-label text-[10px] font-semibold uppercase tracking-widest">{item.label}</span>
+            <span
+              className={cn(
+                'font-label text-[10px] font-semibold uppercase tracking-widest',
+                isActive && 'text-primary'
+              )}
+            >
+              {item.label}
+            </span>
           </button>
         );
       })}

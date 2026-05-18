@@ -62,7 +62,7 @@ export const firestoreService = {
     try {
       await setDoc(doc(db, 'users', profile.uid), sanitizeData(profile));
     } catch (e) {
-      console.error('[Firestore] saveUserProfile failed', path, e);
+      handleFirestoreError(e, OperationType.WRITE, path);
     }
   },
 

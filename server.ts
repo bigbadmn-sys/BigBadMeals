@@ -9,6 +9,10 @@ import rateLimit from "express-rate-limit";
 import admin from "firebase-admin";
 import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
 import { loadServerConfig } from "./server/config.js";
+import { discoverRecipeBannerImageUrl, pickBannerImageFromHtml } from "./server/discoverRecipeBanner.js";
+import { extractStructuredRecipeFromHtml } from "./server/jsonLdRecipe.js";
+import { htmlToPlainRecipeText } from "./server/htmlToText.js";
+import { fetchPublicHtml } from "./server/pageFetch.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -229,22 +233,95 @@ async function startServer() {
       if (!isNonEmptyString(url)) {
         return respondError(res, 400, "VALIDATION_ERROR", "Body.url must be a non-empty string", requestId);
       }
+      const trimmedUrl = url.trim();
+
+      let doc: Awaited<ReturnType<typeof fetchPublicHtml>> = null;
+      try {
+        doc = await fetchPublicHtml(trimmedUrl);
+      } catch (err) {
+        console.warn("[extract-url] HTML fetch failed", { requestId, message: String(err) });
+      }
+
+      const structured = doc ? extractStructuredRecipeFromHtml(doc.html) : null;
+      const textExcerpt = doc ? htmlToPlainRecipeText(doc.html, 88_000) : "";
+      const banner = doc ? pickBannerImageFromHtml(doc.html, doc.finalUrl) : null;
+
+      const verifiedBlock =
+        structured?.ingredientLines?.length
+          ? `PUBLISHER_SCHEMA_INGREDIENT_LINES (verbatim; every output ingredient must correspond to one of these lines — do not add or substitute items such as extra meats not listed here):\n${structured.ingredientLines
+              .map((l, i) => `${i + 1}. ${l}`)
+              .join("\n")}\n\n`
+          : "";
+
+      const prompt = doc
+        ? `You convert recipe web pages into structured JSON for our application.
+
+STRICT RULES:
+- Use ONLY information in PUBLISHER_SCHEMA_INGREDIENT_LINES (if present) and/or PAGE_TEXT below. Do NOT use other recipes, "classic" versions, or approximate ingredient lists from memory.
+- Do NOT invent ingredients (example: do not add ground pork if the source only lists ground beef).
+- If PUBLISHER_SCHEMA_INGREDIENT_LINES is present: build the "ingredients" array ONLY from those lines — one object per line, splitting name/amount/unit faithfully from the line text. Do not merge or rename items.
+- For "instructions", use ONLY steps supported by PAGE_TEXT. If unclear, output fewer steps — never guess full procedures.
+- For title, prepTime, cookTime, servings, nutritionalInfo, prefer values explicitly stated in PAGE_TEXT or the schema lines.
+
+PAGE_URL: ${trimmedUrl}
+
+${verifiedBlock}---PAGE_TEXT_START---
+${textExcerpt}
+---PAGE_TEXT_END---
+`
+        : `The recipe page HTML could not be downloaded. URL: ${trimmedUrl}
+
+Return minimal structured JSON. Do NOT fabricate ingredients: if you cannot see ingredients in the URL alone, return an empty ingredients array [].`;
+
       const ai = getAiClient();
       const response = await ai.models.generateContent({
         model: "gemini-flash-latest",
-        contents: `Extract the full recipe from this URL: ${url}`,
+        contents: prompt,
         config: {
           responseMimeType: "application/json",
           responseSchema: RECIPE_SCHEMA
         }
       });
-      res.json(parseModelJson(response.text));
+      const recipe = parseModelJson(response.text) as Record<string, unknown>;
+
+      if (structured?.ingredientLines?.length) {
+        recipe.ingredients = structured.ingredients;
+      }
+      if (structured?.title && structured.title.trim()) {
+        recipe.title = structured.title.trim();
+      }
+      if (structured?.description && structured.description.trim() && !isNonEmptyString(recipe.description)) {
+        recipe.description = structured.description.trim();
+      }
+
+      if (typeof banner === "string" && banner.length > 0) {
+        recipe.imageUrl = banner;
+      }
+      (recipe as { sourceUrl?: string }).sourceUrl = trimmedUrl;
+      res.json(recipe);
     } catch (error: any) {
       console.error("[AI Server Error]", { requestId, route: "/api/ai/extract-url", error });
       if (error instanceof SyntaxError) {
         return respondError(res, 502, "AI_BAD_RESPONSE", "AI returned invalid JSON", requestId);
       }
       return respondError(res, 502, "AI_UPSTREAM_ERROR", error?.message || "AI request failed", requestId);
+    }
+  });
+
+  /** Pinterest-style hero image from a public recipe URL (OG / Twitter / JSON-LD / img); no Gemini. */
+  app.post("/api/ai/recipe-banner", async (req, res) => {
+    const requestId = getRequestId(req);
+    try {
+      const { url } = req.body ?? {};
+      if (!isNonEmptyString(url)) {
+        return respondError(res, 400, "VALIDATION_ERROR", "Body.url must be a non-empty string", requestId);
+      }
+      const trimmed = url.trim();
+      const imageUrl = await discoverRecipeBannerImageUrl(trimmed);
+      res.json({ imageUrl: imageUrl ?? null });
+    } catch (error: any) {
+      console.error("[AI Server Error]", { requestId, route: "/api/ai/recipe-banner", error });
+      return respondError(res, 502, "INTERNAL_ERROR", error?.message || "Banner lookup failed", requestId);
     }
   });
 
@@ -258,7 +335,7 @@ async function startServer() {
       const ai = getAiClient();
       const response = await ai.models.generateContent({
         model: "gemini-flash-latest",
-        contents: `Extract recipe details from this text into structured JSON: ${text}`,
+        contents: `Extract recipe details from this text into structured JSON. Use ONLY what appears in the text — do not add ingredients from memory or similar recipes.\n\n${text}`,
         config: {
           responseMimeType: "application/json",
           responseSchema: RECIPE_SCHEMA
@@ -289,7 +366,14 @@ async function startServer() {
         model: "gemini-flash-latest",
         contents: {
           parts: [
-            { text: "Transcribe and extract the full recipe from this image." },
+            {
+              text: `Transcribe the recipe from this image into structured JSON.
+
+STRICT RULES:
+- Only include ingredients and steps you can clearly read in the image. If text is blurry or missing, omit it — do not guess.
+- Do NOT add "typical" ingredients for this kind of recipe from memory (no extra meats, spices, or pantry staples unless they appear in the image).
+- If you cannot read any ingredients, return an empty ingredients array [].`,
+            },
             { inlineData: { data: image, mimeType: mimeType || "image/jpeg" } }
           ]
         },

@@ -32,7 +32,9 @@ test('adds recipe to today meal plan from recipe details modal', async ({ page }
   // Open the details modal by clicking the recipe card.
   await page.getByText('Modal Chili').click();
   await page.getByRole('button', { name: 'Add to Meal Plan' }).click();
-  await expect(page.getByText('Added to today’s meal plan')).toBeVisible();
+  await expect(page.getByTestId('recipes-add-plan-panel')).toBeVisible();
+  await page.getByTestId('recipes-add-plan-confirm').click();
+  await expect(page.getByText("Added to today's meal plan")).toBeVisible();
 
   // Planner should show the meal title in the current week (today).
   await page.keyboard.press('Escape'); // best-effort close if modal lingers

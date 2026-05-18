@@ -3,7 +3,7 @@ import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../components/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Calendar as CalendarIcon, Sparkles, Loader2, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Sparkles, Loader2, ChevronLeft, ChevronRight, Plus, X, ChevronsDown, ChevronsUp } from 'lucide-react';
 import { format, addDays, startOfWeek, isSameDay } from 'date-fns';
 import { dataService } from '../services/dataService';
 import { generateWeeklyMealPlan } from '../services/geminiService';
@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tab } from '../components/Navigation';
 import { categorizeIngredient } from '../lib/ingredientUtils';
+import { ALL_MEAL_SLOTS, DEFAULT_VISIBLE_MEAL_SLOTS, EXTRA_MEAL_SLOTS, mealSlotExpandKey } from '../lib/mealPlanSlots';
 
 type PlannerProps = {
   navigate: (tab: Tab) => void;
@@ -94,6 +95,8 @@ export const Planner = ({ navigate }: PlannerProps) => {
   const [snackAmount, setSnackAmount] = useState('');
   const [snackUnit, setSnackUnit] = useState('');
   const [snackUrlText, setSnackUrlText] = useState('');
+  /** Per day + meal type (breakfast/lunch/dinner): extra slots (appetizer, drink, dessert) hidden until expanded. */
+  const [mealSlotListExpanded, setMealSlotListExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (user) {
@@ -112,7 +115,10 @@ export const Planner = ({ navigate }: PlannerProps) => {
   };
 
   const handleGenerate = async () => {
-    if (!profile) return;
+    if (!profile) {
+      toast.error('Profile is still loading. Try again in a moment.');
+      return;
+    }
     setGenerating(true);
     try {
       const startDate = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
@@ -243,7 +249,8 @@ export const Planner = ({ navigate }: PlannerProps) => {
                   variant="outline"
                   className="rounded-xl"
                   onClick={() => {
-                    toast.message('Pick a recipe in Recipes to add to this day.');
+                    sessionStorage.setItem('bb:plan:addTarget', JSON.stringify({ date: dateIso, type: 'dinner', slot: 'main' }));
+                    toast.message('Choose a recipe in Recipes to add to this day.');
                     navigate('recipes');
                   }}
                 >
@@ -254,7 +261,12 @@ export const Planner = ({ navigate }: PlannerProps) => {
                 <div className="p-6 space-y-4">
                   {(['breakfast', 'lunch', 'dinner'] as const).map((mealType) => {
                     const mealsOfType = meals.filter((m) => m.type === mealType);
-                    const slots = ['main', 'appetizer', 'drink', 'side', 'dessert'] as const;
+                    const expandKey = mealSlotExpandKey(dateIso, mealType);
+                    const expanded = mealSlotListExpanded[expandKey] === true;
+                    const slots = expanded ? ALL_MEAL_SLOTS : DEFAULT_VISIBLE_MEAL_SLOTS;
+                    const extraSlotHasMeals = EXTRA_MEAL_SLOTS.some((slot) =>
+                      mealsOfType.some((m) => (m.slot || 'main') === slot)
+                    );
                     return (
                       <div key={mealType} className="rounded-3xl border border-border/60 bg-background/50 p-4">
                         <div className="flex items-center justify-between mb-3">
@@ -302,6 +314,51 @@ export const Planner = ({ navigate }: PlannerProps) => {
                             );
                           })}
                         </div>
+                        {!expanded && (
+                          <div className="mt-3 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="rounded-xl border-dashed"
+                              aria-expanded={false}
+                              onClick={() =>
+                                setMealSlotListExpanded((prev) => ({
+                                  ...prev,
+                                  [expandKey]: true,
+                                }))
+                              }
+                            >
+                              <ChevronsDown className="mr-2 h-4 w-4" />
+                              EXPAND LIST
+                            </Button>
+                            {extraSlotHasMeals && (
+                              <p className="text-center text-[11px] text-muted-foreground sm:text-right">
+                                Appetizer, drink, or dessert slots have items — expand to view.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {expanded && (
+                          <div className="mt-3">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="rounded-xl text-muted-foreground"
+                              aria-expanded
+                              onClick={() =>
+                                setMealSlotListExpanded((prev) => ({
+                                  ...prev,
+                                  [expandKey]: false,
+                                }))
+                              }
+                            >
+                              <ChevronsUp className="mr-2 h-4 w-4" />
+                              COLLAPSE LIST
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

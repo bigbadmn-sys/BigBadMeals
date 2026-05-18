@@ -42,6 +42,26 @@ export async function extractRecipeFromUrl(url: string): Promise<Partial<Recipe>
   return fetchAI<Partial<Recipe>>('extract-url', { url });
 }
 
+/** Fetch hero image URL from a recipe page (Open Graph / Twitter / JSON-LD / images), same family as Pinterest pin previews. */
+export async function fetchRecipeBannerFromUrl(url: string): Promise<{ imageUrl: string | null }> {
+  const response = await fetch('/api/ai/recipe-banner', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!response.ok) {
+    let message = `Banner request failed (${response.status})`;
+    try {
+      const err = (await response.json()) as { message?: string };
+      if (err?.message) message = err.message;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<{ imageUrl: string | null }>;
+}
+
 export async function extractRecipeFromText(text: string): Promise<Partial<Recipe>> {
   return fetchAI<Partial<Recipe>>('extract-text', { text });
 }
